@@ -1,6 +1,9 @@
+from django.db import models
+
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from rest_framework import viewsets, status
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
 
 from server.models import Server
@@ -30,7 +33,15 @@ class ServerViewSet(viewsets.ViewSet):
             OpenApiParameter(
                 name='by_user',
                 type=bool,
-            )
+            ),
+            OpenApiParameter(
+                name='by_server_id',
+                type=int,
+            ),
+            OpenApiParameter(
+                name='with_num_members',
+                type=bool,
+            ),
         ]
     )
     def list(self, request):
@@ -39,6 +50,11 @@ class ServerViewSet(viewsets.ViewSet):
             qty = request.query_params.get("qty")
             # Check if the request is to filter servers by user, default to False if not provided
             by_user = request.query_params.get("by_user") == "true"
+            by_server_id = request.query_params.get("by_server_id")
+            with_num_members = request.query_params.get("with_num_members") == "true"
+
+            if by_user and by_server_id and not request.user.is_authenticated:
+                raise AuthenticationFailed()
 
             if category:
                 self.queryset = self.queryset.filter(category__name=category)
@@ -51,6 +67,15 @@ class ServerViewSet(viewsets.ViewSet):
                 # Filter the queryset by the user
                 user_id = request.user.id
                 self.queryset = self.queryset.filter(members=user_id)
+
+            if by_server_id:
+                self.queryset = self.queryset.filter(id=by_server_id)
+                if not self.queryset.exists():
+                    return Response({"error": "Server not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            if with_num_members:
+                # Annotate the queryset with the number of members in each server
+                self.queryset = self.queryset.annotate(num_members=models.Count("members"))
 
             serializer = self.serializer_class(self.queryset, many=True)
             return Response(serializer.data)
